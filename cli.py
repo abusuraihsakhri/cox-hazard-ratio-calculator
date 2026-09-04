@@ -4,12 +4,17 @@ CLI for Cox Proportional Hazards Model.
 
 Usage:
   python cli.py fit --time 1 2 3 4 5 --event 1 0 1 1 0 --covariate 0.5 1.2 0.8 1.5 0.3
-  python cli.py compare --time 1 2 3 4 5 --event 1 0 1 1 0 --covariate 0 0 1 1 1
+  python cli.py multivariate --time 1 2 3 4 5 --event 1 0 1 1 0 --covariates '[[0.5,65],[1.2,70]]'
+  python cli.py ph-check --time 1 2 3 4 5 --event 1 0 1 1 0 --covariate 0.5 1.2 0.8 1.5 0.3
   python cli.py batch --input sample.csv --output results.csv
+  python cli.py audit --task-id TASK-01 --target KEY-01 --primary 12.0 --secondary 4.0 --status NOMINAL
+  python cli.py chat Explain specifications
+  python cli.py verify-audit
 """
 
 import argparse
 import json
+import os
 import sys
 
 from cox_hr import cox_ph, hazard_ratio, forest_plot_data, check_proportional_hazards, summary, process_csv
@@ -49,6 +54,22 @@ def main(argv=None):
     p_batch.add_argument("-i", "--input", required=True, help="Input CSV path")
     p_batch.add_argument("-o", "--output", default="results.csv", help="Output CSV path")
 
+    # --- audit ---
+    p_audit = sub.add_parser("audit", help="Run supervisor audit on a task payload")
+    p_audit.add_argument("--task-id", required=True, help="Task identifier")
+    p_audit.add_argument("--target", default="KEY-001", help="Target identifier")
+    p_audit.add_argument("--primary", type=float, default=12.0, help="Primary metric value")
+    p_audit.add_argument("--secondary", type=float, default=4.0, help="Secondary metric value")
+    p_audit.add_argument("--status", default="NOMINAL", help="Status descriptor")
+    p_audit.add_argument("--critical", action="store_true", help="Mark as critical")
+
+    # --- chat ---
+    p_chat = sub.add_parser("chat", help="Supervisory chat interface")
+    p_chat.add_argument("message", nargs="+", help="Chat message words")
+
+    # --- verify-audit ---
+    sub.add_parser("verify-audit", help="Verify HMAC audit trail integrity")
+
     args = parser.parse_args(argv)
 
     if args.command == "fit":
@@ -84,6 +105,38 @@ def main(argv=None):
         result = process_csv(args.input, args.output)
         print(f"Processed {result['n_subjects']} subjects, {result['n_events']} events -> {args.output}")
         return 0
+
+    elif args.command == "audit":
+        from agents.supervisor import SystemSupervisor
+        from agents.models import SystemTaskPayload
+        supervisor = SystemSupervisor(model_provider=os.getenv("MODEL_PROVIDER", "mock"))
+        payload = SystemTaskPayload(
+            task_id=args.task_id,
+            target_identifier=args.target,
+            primary_metric=args.primary,
+            secondary_metric=args.secondary,
+            status_descriptor=args.status,
+            is_critical_flag=args.critical,
+        )
+        dossier = supervisor.process_task(payload)
+        print(json.dumps(dossier.to_dict(), indent=2, default=str))
+        return 0
+
+    elif args.command == "chat":
+        from agents.supervisor import SystemSupervisor
+        supervisor = SystemSupervisor(model_provider=os.getenv("MODEL_PROVIDER", "mock"))
+        message = " ".join(args.message)
+        response = supervisor.query_supervisory_chat(message)
+        print(response)
+        return 0
+
+    elif args.command == "verify-audit":
+        from agents.base import AuditLogger
+        verified = AuditLogger.verify_integrity()
+        trail = AuditLogger.get_trail()
+        print(f"Audit Trail Integrity: {'VERIFIED' if verified else 'COMPROMISED'}")
+        print(f"Total audit blocks: {len(trail)}")
+        return 0 if verified else 1
 
     parser.print_help()
     return 1

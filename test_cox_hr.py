@@ -316,3 +316,60 @@ class TestEdgeCases:
         covariates = [[random.uniform(0, 1)] for _ in range(n)]
         result = cox_ph(times, events, covariates)
         assert result["n_subjects"] == n
+
+
+# ---------------------------------------------------------------------------
+# Input validation tests
+# ---------------------------------------------------------------------------
+
+class TestInputValidation:
+    def test_inconsistent_covariate_dimensions(self):
+        """Inconsistent covariate dimensions should raise ValueError."""
+        with pytest.raises(ValueError, match="Covariate vector at index"):
+            cox_ph([1, 2, 3], [1, 0, 1], [[1], [2, 3], [4]])
+
+    def test_negative_time_raises(self):
+        """Negative times should raise ValueError."""
+        with pytest.raises(ValueError, match="non-negative"):
+            cox_ph([-1, 2, 3], [1, 0, 1], [[1], [2], [3]])
+
+    def test_nan_time_raises(self):
+        """NaN times should raise ValueError."""
+        with pytest.raises(ValueError, match="finite"):
+            cox_ph([float('nan'), 2, 3], [1, 0, 1], [[1], [2], [3]])
+
+    def test_inf_time_raises(self):
+        """Infinite times should raise ValueError."""
+        with pytest.raises(ValueError, match="finite"):
+            cox_ph([float('inf'), 2, 3], [1, 0, 1], [[1], [2], [3]])
+
+    def test_invalid_event_value_raises(self):
+        """Non-binary event values should raise ValueError."""
+        with pytest.raises(ValueError, match="must be 0 or 1"):
+            cox_ph([1, 2, 3], [2, 0, 1], [[1], [2], [3]])
+
+    def test_nan_covariate_raises(self):
+        """NaN covariate values should raise ValueError."""
+        with pytest.raises(ValueError, match="must be finite"):
+            cox_ph([1, 2, 3], [1, 0, 1], [[float('nan')], [2], [3]])
+
+    def test_inf_covariate_raises(self):
+        """Infinite covariate values should raise ValueError."""
+        with pytest.raises(ValueError, match="must be finite"):
+            cox_ph([1, 2, 3], [1, 0, 1], [[float('inf')], [2], [3]])
+
+
+# ---------------------------------------------------------------------------
+# Path traversal protection tests
+# ---------------------------------------------------------------------------
+
+class TestPathSecurity:
+    def test_path_traversal_blocked(self):
+        """Path traversal attempts should be blocked."""
+        with pytest.raises(ValueError, match="Path traversal"):
+            process_csv("../../../etc/passwd", "output.csv")
+
+    def test_null_byte_blocked(self):
+        """Null bytes in path should be blocked."""
+        with pytest.raises(ValueError, match="null bytes"):
+            process_csv("file\x00name.csv", "output.csv")

@@ -17,8 +17,8 @@ Pure Python stdlib — no external dependencies.
 import math
 import csv
 import json
-import sys
-from typing import List, Tuple, Dict, Any, Optional
+import os
+from typing import List, Dict, Any, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +75,29 @@ def cox_ph(
         raise ValueError("covariates must have the same length as times")
     if p == 0:
         raise ValueError("At least one covariate is required")
+
+    # Validate all covariate vectors have consistent dimensions
+    for i, cov in enumerate(covariates):
+        if len(cov) != p:
+            raise ValueError(f"Covariate vector at index {i} has {len(cov)} elements, expected {p}")
+
+    # Validate times are non-negative and finite
+    for i, t in enumerate(times):
+        if not isinstance(t, (int, float)) or math.isnan(t) or math.isinf(t):
+            raise ValueError(f"Time at index {i} must be a finite number, got {t}")
+        if t < 0:
+            raise ValueError(f"Time at index {i} must be non-negative, got {t}")
+
+    # Validate events are binary (0 or 1)
+    for i, e in enumerate(events):
+        if e not in (0, 1):
+            raise ValueError(f"Event at index {i} must be 0 or 1, got {e}")
+
+    # Validate covariate values are finite
+    for i, cov in enumerate(covariates):
+        for j, v in enumerate(cov):
+            if not isinstance(v, (int, float)) or math.isnan(v) or math.isinf(v):
+                raise ValueError(f"Covariate value at subject {i}, covariate {j} must be finite, got {v}")
 
     # Sort by time (ascending)
     indices = sorted(range(n), key=lambda i: times[i])
@@ -364,6 +387,10 @@ def process_csv(input_path: str, output_path: str) -> Dict[str, Any]:
     Expected columns: time, event, and one or more covariate columns.
     Column names auto-detected.
     """
+    # Security: validate paths to prevent path traversal
+    input_path = _validate_safe_path(input_path)
+    output_path = _validate_safe_path(output_path)
+
     with open(input_path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         fieldnames = list(reader.fieldnames or [])
@@ -421,6 +448,23 @@ def _find_col(fieldnames: List[str], candidates: List[str]) -> str:
         if cand.lower() in lower_map:
             return lower_map[cand.lower()]
     return fieldnames[0]
+
+
+def _validate_safe_path(path: str) -> str:
+    """Validate that a file path is safe (no path traversal)."""
+    # Resolve to absolute path
+    abs_path = os.path.abspath(path)
+    # Check for null bytes (can bypass some checks)
+    if '\x00' in path:
+        raise ValueError("Path contains null bytes")
+    # Check for path traversal attempts
+    normalized = os.path.normpath(path)
+    if '..' in normalized.split(os.sep):
+        # Allow relative paths with .. but ensure they don't escape cwd
+        cwd = os.path.abspath(os.getcwd())
+        if not abs_path.startswith(cwd):
+            raise ValueError(f"Path traversal detected: {path}")
+    return abs_path
 
 
 def _solve_linear_system(A: List[List[float]], b: List[float]) -> List[float]:
@@ -558,9 +602,9 @@ def _norm_cdf(x: float) -> float:
 
 
 def _t_sf(t: float, df: int) -> float:
-    """Survival function of t-distribution (approximation for large df)."""
+    """Survival function of t-distribution: P(T > |t|) (one-tailed)."""
     if df > 30:
-        return 2.0 * (1.0 - _norm_cdf(abs(t)))
+        return 1.0 - _norm_cdf(abs(t))
     # Use approximation: for small df, use the incomplete beta function
     x = df / (df + t * t)
     return _inc_beta(df / 2.0, 0.5, x)
