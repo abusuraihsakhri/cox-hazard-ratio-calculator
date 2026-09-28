@@ -1,236 +1,554 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cox Hazard Ratio Calculator — Operations Console</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg: #090d16;
-            --card: #111827;
-            --border: #1f293d;
-            --accent: #3b82f6;
-            --accent-glow: rgba(59, 130, 246, 0.25);
-            --text: #f3f4f6;
-            --text-muted: #9ca3af;
-            --danger: #ef4444;
-            --warning: #f59e0b;
-            --success: #10b981;
-        }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: 'Inter', sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            padding: 2rem;
-            min-height: 100vh;
-        }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-            padding-bottom: 1.5rem;
-            margin-bottom: 2rem;
-        }
-        .header-title h1 { font-size: 1.6rem; font-weight: 700; color: #fff; }
-        .header-title p { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.25rem; }
-        .badge {
-            display: inline-block;
-            padding: 0.3rem 0.8rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
-            font-weight: 600;
-            background: var(--accent-glow);
-            color: var(--accent);
-            border: 1px solid var(--accent);
-        }
-        .grid {
-            display: grid;
-            grid-template-columns: 1fr 1.2fr;
-            gap: 1.5rem;
-        }
-        .card {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 1.5rem;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
-        }
-        .card h2 {
-            font-size: 1.1rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-        .form-group { margin-bottom: 1rem; }
-        label { display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; }
-        input, select, textarea {
-            width: 100%;
-            padding: 0.65rem 0.9rem;
-            background: #0d1322;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            color: #fff;
-            font-family: inherit;
-            font-size: 0.9rem;
-        }
-        input:focus, textarea:focus { outline: none; border-color: var(--accent); }
-        .btn {
-            background: var(--accent);
-            color: #fff;
-            border: none;
-            padding: 0.7rem 1.4rem;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: 0.2s;
-            width: 100%;
-        }
-        .btn:hover { background: #2563eb; }
-        .terminal {
-            background: #060911;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
-            color: #10b981;
-            height: 380px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-        }
-        .metrics-bar {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 1rem;
-            margin-bottom: 1.5rem;
-        }
-        .metric-box {
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 1rem;
-            text-align: center;
-        }
-        .metric-val { font-size: 1.4rem; font-weight: 700; color: #fff; margin-top: 0.25rem; }
-        .metric-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Browser-based Cox proportional hazards regression with Breslow ties.">
+  <title>Cox Hazard Ratio Calculator</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #5f6b7a;
+      --border: #d9e0ea;
+      --accent: #155eef;
+      --accent-strong: #004ee8;
+      --danger: #b42318;
+      --success: #067647;
+      --code: #f1f4f9;
+      --shadow: 0 12px 30px rgba(22, 34, 52, 0.08);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e1420;
+        --panel: #151d2b;
+        --text: #eef2f7;
+        --muted: #a8b3c2;
+        --border: #2b3748;
+        --accent: #7aa2ff;
+        --accent-strong: #9bb8ff;
+        --danger: #ff8a80;
+        --success: #75d6a6;
+        --code: #101725;
+        --shadow: none;
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+    main {
+      width: min(1180px, calc(100% - 2rem));
+      margin: 0 auto;
+      padding: 2rem 0 3rem;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      gap: 1.5rem;
+      align-items: flex-start;
+      margin-bottom: 1.5rem;
+    }
+    h1, h2 { margin: 0; }
+    h1 { font-size: clamp(1.7rem, 3vw, 2.4rem); letter-spacing: -0.03em; }
+    h2 { font-size: 1.05rem; margin-bottom: 1rem; }
+    .subhead { color: var(--muted); margin: 0.35rem 0 0; max-width: 760px; }
+    .privacy {
+      color: var(--success);
+      font-size: 0.85rem;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.25fr);
+      gap: 1rem;
+      align-items: start;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 1.2rem;
+    }
+    .field { margin-bottom: 0.95rem; }
+    label {
+      display: block;
+      font-size: 0.86rem;
+      font-weight: 650;
+      margin-bottom: 0.35rem;
+    }
+    .hint {
+      display: block;
+      color: var(--muted);
+      font-size: 0.78rem;
+      font-weight: 400;
+      margin-top: 0.15rem;
+    }
+    textarea, input {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.7rem 0.8rem;
+      font: inherit;
+    }
+    textarea {
+      min-height: 74px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.86rem;
+    }
+    textarea#covariates { min-height: 175px; }
+    textarea:focus, input:focus, button:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+      outline-offset: 2px;
+      border-color: var(--accent);
+    }
+    .actions {
+      display: flex;
+      gap: 0.65rem;
+      flex-wrap: wrap;
+      margin-top: 0.5rem;
+    }
+    button {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.7rem 1rem;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+      background: var(--panel);
+      color: var(--text);
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button.primary:hover { background: var(--accent-strong); }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    #runtimeStatus {
+      margin: 0 0 1rem;
+      padding: 0.75rem 0.85rem;
+      border-radius: 8px;
+      background: var(--code);
+      color: var(--muted);
+      font-size: 0.86rem;
+    }
+    #runtimeStatus.error { color: var(--danger); }
+    #runtimeStatus.ready { color: var(--success); }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 0.7rem;
+      margin-bottom: 1rem;
+    }
+    .stat {
+      background: var(--code);
+      border-radius: 9px;
+      padding: 0.75rem;
+      min-width: 0;
+    }
+    .stat-label {
+      color: var(--muted);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .stat-value {
+      font-weight: 750;
+      margin-top: 0.2rem;
+      word-break: break-word;
+    }
+    .table-wrap { overflow-x: auto; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.86rem;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 0.62rem 0.55rem;
+      text-align: right;
+      white-space: nowrap;
+    }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-size: 0.78rem; }
+    .empty {
+      color: var(--muted);
+      padding: 1.2rem 0;
+    }
+    .section { margin-top: 1.25rem; }
+    .note {
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin: 0.75rem 0 0;
+    }
+    code {
+      background: var(--code);
+      border-radius: 4px;
+      padding: 0.08rem 0.3rem;
+    }
+
+    @media (max-width: 860px) {
+      header { display: block; }
+      .privacy { margin-top: 0.6rem; display: block; white-space: normal; }
+      .layout { grid-template-columns: 1fr; }
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
 </head>
 <body>
-
-    <div class="header">
-        <div class="header-title">
-            <h1>Cox Hazard Ratio Calculator</h1>
-            <p>Domain: Clinical & Cryptographic AI | Standard: CAP / CLSI / NIST Standards | LabMind-Atlas Architecture</p>
-        </div>
-        <div>
-            <span class="badge">Air-Gapped Active</span>
-            <span class="badge" style="background: rgba(16,185,129,0.2); color: #10b981; border-color: #10b981;">Zero-PHI Guard Active</span>
-        </div>
+<main>
+  <header>
+    <div>
+      <h1>Cox Hazard Ratio Calculator</h1>
+      <p class="subhead">Fits a Cox proportional hazards model in your browser using the repository's Python implementation, including Breslow handling of tied event times.</p>
     </div>
+    <span class="privacy">Local analysis: entered data are not uploaded by this page.</span>
+  </header>
 
-    <div class="metrics-bar">
-        <div class="metric-box">
-            <div class="metric-label">System Status</div>
-            <div class="metric-val" style="color: var(--success);" id="m-status">OPTIMAL</div>
-        </div>
-        <div class="metric-box">
-            <div class="metric-label">Tasks Processed</div>
-            <div class="metric-val" id="m-tasks">142</div>
-        </div>
-        <div class="metric-box">
-            <div class="metric-label">Audit Blocks Signed</div>
-            <div class="metric-val" id="m-audit">142</div>
-        </div>
-        <div class="metric-box">
-            <div class="metric-label">PHI Interceptions</div>
-            <div class="metric-val" style="color: var(--accent);" id="m-phi">0</div>
-        </div>
-    </div>
+  <div class="layout">
+    <section class="panel" aria-labelledby="input-heading">
+      <h2 id="input-heading">Input data</h2>
 
-    <div class="grid">
-        <div class="card">
-            <h2>⚙️ Dispatch Distributed Component Audit</h2>
-            <div class="form-group">
-                <label>Task / Sample ID</label>
-                <input type="text" id="task_id" value="TASK-2026-LIVE-01">
-            </div>
-            <div class="form-group">
-                <label>Target Identifier</label>
-                <input type="text" id="target_id" value="SPECIMEN-ALPHA-77">
-            </div>
-            <div class="form-group">
-                <label>Primary Measurement / Value</label>
-                <input type="number" id="primary_metric" value="29.4" step="0.1">
-            </div>
-            <div class="form-group">
-                <label>Secondary Metric / Kinetic Index</label>
-                <input type="number" id="secondary_metric" value="14.8" step="0.1">
-            </div>
-            <div class="form-group">
-                <label>Status / Phenotype Descriptor</label>
-                <input type="text" id="status_descriptor" value="DISCORDANT_ANOMALY">
-            </div>
-            <div class="form-group">
-                <label><input type="checkbox" id="is_critical" checked> Trigger Emergency / Critical Flag</label>
-            </div>
-            <button class="btn" onclick="runAudit()">Execute Distributed Component Audit</button>
-        </div>
+      <div class="field">
+        <label for="times">Observed times
+          <span class="hint">Comma- or space-separated non-negative numbers.</span>
+        </label>
+        <textarea id="times">1, 2, 3, 4, 5, 6, 7, 8, 9, 10</textarea>
+      </div>
 
-        <div class="card">
-            <h2>📊 Real-Time Consensus Dossier & Audit Log</h2>
-            <div class="terminal" id="outputConsole">// Cox Hazard Ratio Calculator Operations Console Ready
-// Connection established with Air-Gapped Supervisor
-// Cryptographic HMAC-SHA256 audit ledger loaded.
-// Ready for live task payload dispatch...</div>
-        </div>
-    </div>
+      <div class="field">
+        <label for="events">Event indicators
+          <span class="hint">Use 1 for event and 0 for censored.</span>
+        </label>
+        <textarea id="events">1, 0, 1, 1, 0, 1, 0, 1, 0, 1</textarea>
+      </div>
 
-    <script>
-        async function runAudit() {
-            const consoleEl = document.getElementById('outputConsole');
-            consoleEl.innerText = "// Dispatching task across specialized workers...
-// Invoking InvariantQCWorker, SafetyEscalationWorker, ProtocolWorker...";
+      <div class="field">
+        <label for="covariates">Covariates
+          <span class="hint">One subject per line; separate multiple covariates with commas or spaces.</span>
+        </label>
+        <textarea id="covariates">0.5, 65
+1.2, 70
+0.8, 55
+1.5, 60
+0.3, 72
+1.1, 68
+0.9, 75
+1.4, 58
+0.6, 80
+1.0, 62</textarea>
+      </div>
 
-            const payload = {
-                task_id: document.getElementById('task_id').value,
-                target_identifier: document.getElementById('target_id').value,
-                primary_metric: parseFloat(document.getElementById('primary_metric').value),
-                secondary_metric: parseFloat(document.getElementById('secondary_metric').value),
-                status_descriptor: document.getElementById('status_descriptor').value,
-                is_critical_flag: document.getElementById('is_critical').checked
-            };
+      <div class="field">
+        <label for="labels">Covariate labels
+          <span class="hint">Optional, comma-separated. Count must match the number of covariates.</span>
+        </label>
+        <input id="labels" value="treatment, age">
+      </div>
 
-            try {
-                const res = await fetch('/api/audit', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await res.json();
-                consoleEl.innerText = JSON.stringify(data, null, 2);
-                document.getElementById('m-tasks').innerText = parseInt(document.getElementById('m-tasks').innerText) + 1;
-                document.getElementById('m-audit').innerText = parseInt(document.getElementById('m-audit').innerText) + 1;
-            } catch (err) {
-                consoleEl.innerText = "// Offline / Simulation Output:\n" + JSON.stringify({
-                    dossier_id: "DOSSIER-SIM-" + Math.floor(Math.random()*10000),
-                    system: "cox-hazard-ratio-calculator",
-                    domain: "Clinical & Cryptographic AI",
-                    task_id: payload.task_id,
-                    overall_urgency: payload.is_critical_flag ? "CRITICAL_STAT_PANIC" : "ELEVATED_RISK",
-                    integrity_status: "DISCORDANT_ANOMALY",
-                    alerts: [
-                        { worker: "InvariantQCWorker", alert: "Primary metric exceeds upper reference bound" },
-                        { worker: "SafetyEscalationWorker", alert: "Critical emergency interlock flag active" }
-                    ],
-                    audit_hash: "HMAC_SHA256_e83f9a72b941d6c381f9"
-                }, null, 2);
-            }
-        }
-    </script>
+      <div class="actions">
+        <button id="analyzeBtn" class="primary" disabled>Analyze</button>
+        <button id="sampleBtn" type="button">Load sample</button>
+        <button id="downloadBtn" type="button" disabled>Download JSON</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="results-heading">
+      <h2 id="results-heading">Results</h2>
+      <div id="runtimeStatus" role="status" aria-live="polite">Loading Python runtime…</div>
+
+      <div id="resultContent">
+        <p class="empty">Results will appear here after the Python runtime is ready and an analysis is run.</p>
+      </div>
+    </section>
+  </div>
+
+  <p class="note">This is a statistical utility, not a validated clinical decision-support system. Review model assumptions, coding, censoring, ties, and convergence before using estimates in research or clinical work.</p>
+</main>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pyodide.js"></script>
+<script>
+  const PYODIDE_INDEX = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/";
+  let pyodide = null;
+  let latestResult = null;
+
+  const statusEl = document.getElementById("runtimeStatus");
+  const analyzeBtn = document.getElementById("analyzeBtn");
+  const downloadBtn = document.getElementById("downloadBtn");
+  const resultContent = document.getElementById("resultContent");
+
+  function setStatus(message, kind = "") {
+    statusEl.textContent = message;
+    statusEl.className = kind;
+  }
+
+  function parseNumberList(raw, label) {
+    const tokens = raw.trim().split(/[\s,;]+/).filter(Boolean);
+    if (!tokens.length) throw new Error(label + " cannot be empty.");
+    const values = tokens.map(Number);
+    if (values.some(value => !Number.isFinite(value))) {
+      throw new Error(label + " contains a non-numeric value.");
+    }
+    return values;
+  }
+
+  function parseCovariates(raw) {
+    const lines = raw.trim().split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    if (!lines.length) throw new Error("Covariates cannot be empty.");
+    const rows = lines.map((line, index) => {
+      const values = line.split(/[\s,;]+/).filter(Boolean).map(Number);
+      if (!values.length || values.some(value => !Number.isFinite(value))) {
+        throw new Error("Invalid covariate value on line " + (index + 1) + ".");
+      }
+      return values;
+    });
+    const width = rows[0].length;
+    if (rows.some(row => row.length !== width)) {
+      throw new Error("Every covariate row must contain the same number of values.");
+    }
+    return rows;
+  }
+
+  function parseLabels(raw, count) {
+    const labels = raw.trim() ? raw.split(",").map(value => value.trim()).filter(Boolean) : [];
+    if (labels.length && labels.length !== count) {
+      throw new Error("Provide exactly " + count + " covariate label(s), or leave labels blank.");
+    }
+    return labels.length ? labels : Array.from({length: count}, (_, i) => "Covariate_" + (i + 1));
+  }
+
+  function formatNumber(value, digits = 4) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+    return Number(value).toFixed(digits);
+  }
+
+  function appendCell(row, value, alignLeft = false) {
+    const cell = document.createElement("td");
+    cell.textContent = String(value);
+    if (alignLeft) cell.style.textAlign = "left";
+    row.appendChild(cell);
+  }
+
+  function makeTable(headers, rows) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "table-wrap";
+    const table = document.createElement("table");
+    const thead = document.createElement("thead");
+    const headerRow = document.createElement("tr");
+    headers.forEach(header => {
+      const th = document.createElement("th");
+      th.textContent = header;
+      headerRow.appendChild(th);
+    });
+    thead.appendChild(headerRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    rows.forEach(values => {
+      const row = document.createElement("tr");
+      values.forEach((value, index) => appendCell(row, value, index === 0));
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    return wrapper;
+  }
+
+  function renderResults(data) {
+    resultContent.replaceChildren();
+
+    const summary = document.createElement("div");
+    summary.className = "summary-grid";
+    const stats = [
+      ["Subjects", data.model.n_subjects],
+      ["Events", data.model.n_events],
+      ["Iterations", data.model.iterations],
+      ["Converged", data.model.converged ? "Yes" : "No"],
+    ];
+    stats.forEach(([label, value]) => {
+      const box = document.createElement("div");
+      box.className = "stat";
+      const labelEl = document.createElement("div");
+      labelEl.className = "stat-label";
+      labelEl.textContent = label;
+      const valueEl = document.createElement("div");
+      valueEl.className = "stat-value";
+      valueEl.textContent = String(value);
+      box.append(labelEl, valueEl);
+      summary.appendChild(box);
+    });
+    resultContent.appendChild(summary);
+
+    const estimatesHeading = document.createElement("h2");
+    estimatesHeading.className = "section";
+    estimatesHeading.textContent = "Model estimates";
+    resultContent.appendChild(estimatesHeading);
+
+    const estimateRows = data.labels.map((label, i) => [
+      label,
+      formatNumber(data.model.coefficients[i]),
+      formatNumber(data.model.se[i]),
+      formatNumber(data.model.hazard_ratios[i]),
+      formatNumber(data.model.ci_lower[i]) + " – " + formatNumber(data.model.ci_upper[i]),
+      formatNumber(data.model.z_scores[i]),
+      formatNumber(data.model.p_values[i], 6),
+    ]);
+    resultContent.appendChild(makeTable(
+      ["Covariate", "β", "SE", "HR", "95% CI", "z", "p"],
+      estimateRows
+    ));
+
+    const phHeading = document.createElement("h2");
+    phHeading.className = "section";
+    phHeading.textContent = "Proportional hazards check";
+    resultContent.appendChild(phHeading);
+
+    if (!data.ph.checks.length) {
+      const message = document.createElement("p");
+      message.className = "empty";
+      message.textContent = "Too few event residuals for a proportional-hazards correlation check.";
+      resultContent.appendChild(message);
+    } else {
+      const phRows = data.ph.checks.map(check => [
+        data.labels[check.covariate] || ("Covariate_" + (check.covariate + 1)),
+        formatNumber(check.correlation),
+        formatNumber(check.p_value, 6),
+        check.assumption_holds ? "No evidence of violation" : "Potential violation",
+      ]);
+      resultContent.appendChild(makeTable(
+        ["Covariate", "Correlation", "p", "Interpretation"],
+        phRows
+      ));
+    }
+
+    const logLikelihood = document.createElement("p");
+    logLikelihood.className = "note";
+    logLikelihood.textContent = "Partial log-likelihood: " + formatNumber(data.model.log_likelihood, 6) + ". Ties use the Breslow approximation.";
+    resultContent.appendChild(logLikelihood);
+  }
+
+  async function initializeRuntime() {
+    try {
+      pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
+      const response = await fetch("./cox_hr.py", { cache: "no-cache" });
+      if (!response.ok) throw new Error("Unable to load cox_hr.py (" + response.status + ").");
+      const source = await response.text();
+      pyodide.FS.writeFile("/home/pyodide/cox_hr.py", source);
+      await pyodide.runPythonAsync(
+        "import sys\n" +
+        "sys.path.insert(0, '/home/pyodide')\n" +
+        "import cox_hr"
+      );
+      analyzeBtn.disabled = false;
+      setStatus("Python runtime ready. Analysis runs locally in this browser.", "ready");
+    } catch (error) {
+      setStatus("Runtime failed to initialize: " + error.message, "error");
+    }
+  }
+
+  async function analyze() {
+    try {
+      analyzeBtn.disabled = true;
+      downloadBtn.disabled = true;
+      setStatus("Running Cox model…");
+
+      const times = parseNumberList(document.getElementById("times").value, "Observed times");
+      const events = parseNumberList(document.getElementById("events").value, "Event indicators");
+      const covariates = parseCovariates(document.getElementById("covariates").value);
+
+      if (times.length !== events.length || times.length !== covariates.length) {
+        throw new Error("Times, events, and covariate rows must have the same subject count.");
+      }
+      if (events.some(value => value !== 0 && value !== 1)) {
+        throw new Error("Event indicators must contain only 0 or 1.");
+      }
+
+      const labels = parseLabels(document.getElementById("labels").value, covariates[0].length);
+      const payload = { times, events, covariates, labels };
+      pyodide.globals.set("payload_json", JSON.stringify(payload));
+
+      const resultJson = await pyodide.runPythonAsync(`
+import json
+import math
+import cox_hr
+
+payload = json.loads(payload_json)
+model = cox_hr.cox_ph(payload["times"], payload["events"], payload["covariates"])
+ph = cox_hr.check_proportional_hazards(payload["times"], payload["events"], payload["covariates"])
+model.pop("schoenfeld", None)
+
+def clean(value):
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, list):
+        return [clean(item) for item in value]
+    if isinstance(value, dict):
+        return {key: clean(item) for key, item in value.items()}
+    return value
+
+json.dumps(clean({"model": model, "ph": ph, "labels": payload["labels"]}), allow_nan=False)
+`);
+
+      latestResult = JSON.parse(resultJson);
+      renderResults(latestResult);
+      downloadBtn.disabled = false;
+      setStatus(
+        latestResult.model.converged
+          ? "Analysis complete."
+          : "Analysis complete, but Newton-Raphson did not meet the convergence tolerance.",
+        latestResult.model.converged ? "ready" : "error"
+      );
+    } catch (error) {
+      latestResult = null;
+      resultContent.replaceChildren();
+      const message = document.createElement("p");
+      message.className = "empty";
+      message.textContent = error.message || String(error);
+      resultContent.appendChild(message);
+      setStatus("Analysis failed: " + (error.message || String(error)), "error");
+    } finally {
+      analyzeBtn.disabled = pyodide === null;
+    }
+  }
+
+  document.getElementById("sampleBtn").addEventListener("click", () => {
+    document.getElementById("times").value = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10";
+    document.getElementById("events").value = "1, 0, 1, 1, 0, 1, 0, 1, 0, 1";
+    document.getElementById("covariates").value =
+      "0.5, 65\n1.2, 70\n0.8, 55\n1.5, 60\n0.3, 72\n1.1, 68\n0.9, 75\n1.4, 58\n0.6, 80\n1.0, 62";
+    document.getElementById("labels").value = "treatment, age";
+  });
+
+  analyzeBtn.addEventListener("click", analyze);
+
+  downloadBtn.addEventListener("click", () => {
+    if (!latestResult) return;
+    const blob = new Blob([JSON.stringify(latestResult, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "cox-hazard-ratio-results.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  initializeRuntime();
+</script>
 </body>
 </html>
