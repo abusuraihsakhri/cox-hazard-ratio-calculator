@@ -42,3 +42,23 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Smoke test deployed site
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          base="${PAGE_URL%/}"
+          ok=0
+          for i in {1..20}; do
+            if curl --fail --silent --show-error --location "$base/" -o /tmp/index.html; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ok" -eq 1
+          grep -q "Cox Hazard Ratio Calculator" /tmp/index.html
+          grep -q "pyodide" /tmp/index.html
+
+          curl --fail --silent --show-error --location "$base/cox_hr.py" -o /tmp/cox_hr.py
+          grep -q "def cox_ph" /tmp/cox_hr.py
