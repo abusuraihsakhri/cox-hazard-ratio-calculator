@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pytest
-from agents.base import PHIGuard, AuditLogger, SecurityException
+from agents.base import PHIGuard, AuditLogger, AuditTrail, SecurityException
 from agents.models import SystemTaskPayload, UrgencyLevel, SystemIntegrityStatus
 from agents.workers import InvariantQCWorker, SafetyEscalationWorker, ProtocolConformanceWorker
 from agents.supervisor import SystemSupervisor
@@ -63,3 +63,19 @@ def test_supervisor_consensus_and_audit():
     assert main(["audit", "--task-id", "CLI-TEST-01"]) == 0
     assert main(["chat", "Explain", "specifications"]) == 0
     assert main(["verify-audit"]) == 0
+
+
+def test_audit_trail_detects_signature_tampering():
+    trail = AuditTrail(secret_key="unit-test-secret")
+    trail.log("tester", "unit", "EVENT", {"status": "ok"})
+    assert trail.verify_integrity() is True
+    trail.logs[0]["actor"] = "tampered"
+    assert trail.verify_integrity() is False
+
+
+def test_audit_trail_returns_defensive_copy():
+    trail = AuditTrail(secret_key="unit-test-secret")
+    trail.log("tester", "unit", "EVENT", {"status": "ok"})
+    external = trail.get_trail()
+    external[0]["actor"] = "modified"
+    assert trail.verify_integrity() is True
