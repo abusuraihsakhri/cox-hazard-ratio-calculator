@@ -110,7 +110,7 @@ pytest -v
 python -m pip_audit -r requirements.txt
 ```
 
-GitHub Actions runs these checks on Python 3.10, 3.11, and 3.12, builds and smoke-tests the Docker image, assembles the Pages artifact, deploys it, and performs an HTTP smoke test of the live page and Python module.
+GitHub Actions runs these checks on Python 3.10, 3.11, and 3.12, builds and smoke-tests the Docker image, launches the assembled browser app in headless Chrome, initializes Pyodide, executes the sample Cox analysis, deploys Pages, and performs an HTTP smoke test of the published page and Python module.
 
 The optional `agents/` supervisor demo includes an HMAC-SHA256 in-memory audit chain and a regex-based sensitive-identifier guard. The guard is heuristic and must not be treated as complete de-identification or HIPAA compliance. Only the deterministic local `mock` model adapter is implemented.
 
