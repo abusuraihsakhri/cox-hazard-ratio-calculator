@@ -21,6 +21,7 @@ from cox_hr import (
     _pearson_correlation,
     _norm_cdf,
     _z_to_p,
+    _t_sf,
 )
 
 
@@ -373,3 +374,55 @@ class TestPathSecurity:
         """Null bytes in path should be blocked."""
         with pytest.raises(ValueError, match="null bytes"):
             process_csv("file\x00name.csv", "output.csv")
+
+
+# ---------------------------------------------------------------------------
+# Regression tests added during repository audit
+# ---------------------------------------------------------------------------
+
+class TestStatisticalRegressionCases:
+    def test_breslow_tied_events_reference_coefficient(self):
+        """Breslow ties must count the risk-set denominator d times, not d squared."""
+        times = [1, 1, 2, 3, 4]
+        events = [1, 1, 1, 0, 1]
+        covariates = [[0], [1], [0], [1], [2]]
+        result = cox_ph(times, events, covariates)
+        assert result["converged"] is True
+        assert result["coefficients"][0] == pytest.approx(-1.1238484719725923, abs=1e-8)
+
+    def test_student_t_survival_is_one_tailed(self):
+        """t=2.776445 with 4 df has one-tailed survival probability 0.025."""
+        assert _t_sf(2.7764451051977987, 4) == pytest.approx(0.025, abs=5e-5)
+
+    def test_max_iter_must_be_positive(self):
+        with pytest.raises(ValueError, match="max_iter"):
+            cox_ph([1, 2, 3], [1, 0, 1], [[0], [1], [2]], max_iter=0)
+
+    def test_labels_length_must_match_covariates(self):
+        with pytest.raises(ValueError, match="labels"):
+            forest_plot_data(
+                [1, 2, 3],
+                [1, 0, 1],
+                [[0, 1], [1, 0], [2, 1]],
+                labels=["only-one"],
+            )
+
+    def test_csv_invalid_covariate_is_not_silently_imputed(self, tmp_path):
+        csv_in = tmp_path / "invalid.csv"
+        csv_out = tmp_path / "output.csv"
+        csv_in.write_text(
+            "time,event,treatment\n1,1,1\n2,0,not-a-number\n3,1,0\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="Invalid covariate value"):
+            process_csv(str(csv_in), str(csv_out))
+
+    def test_csv_missing_required_event_column_raises(self, tmp_path):
+        csv_in = tmp_path / "missing_event.csv"
+        csv_out = tmp_path / "output.csv"
+        csv_in.write_text(
+            "time,treatment\n1,1\n2,0\n3,1\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="Required CSV column not found"):
+            process_csv(str(csv_in), str(csv_out))
