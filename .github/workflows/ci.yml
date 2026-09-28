@@ -1,40 +1,101 @@
-name: Cox Hazard Ratio Calculator CI/CD & Security Verification
+name: CI
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [master]
   pull_request:
-    branches: [ master, main ]
+    branches: [master]
+
+permissions:
+  contents: read
 
 jobs:
-  test-and-audit:
+  test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install fastapi uvicorn pydantic pytest
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
 
-    - name: Run Pytest Suite
-      run: |
-        pytest -v
+      - name: Compile Python sources
+        run: python -m compileall -q .
 
-    - name: Security SAST & Zero-PHI Audit
-      run: |
-        python -c "
-        from agents.base import PHIGuard, AuditLogger
-        import pytest
-        assert AuditLogger.verify_integrity() is True
-        print('Security & Zero-PHI Audit Passed!')
-        "
+      - name: Run tests
+        env:
+          AUDIT_SECRET_KEY: ci-test-only-secret-key
+          MODEL_PROVIDER: mock
+        run: pytest -v
+
+      - name: Import API application
+        env:
+          AUDIT_SECRET_KEY: ci-test-only-secret-key
+          MODEL_PROVIDER: mock
+        run: python -c "from agents.api import app; assert app.title == 'Cox Hazard Ratio Calculator API'"
+
+      - name: Audit runtime dependencies
+        run: python -m pip_audit -r requirements.txt
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build image
+        run: docker build -t cox-hazard-ratio-calculator:ci .
+
+      - name: Start container
+        run: |
+          docker run --rm -d             --name cox-hazard-ratio-calculator-ci             -e AUDIT_SECRET_KEY=ci-test-only-secret-key             -p 8000:8000             cox-hazard-ratio-calculator:ci
+
+      - name: Verify health endpoint
+        run: |
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8000/health >/tmp/health.json; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs cox-hazard-ratio-calculator-ci
+          exit 1
+
+      - name: Stop container
+        if: always()
+        run: docker stop cox-hazard-ratio-calculator-ci || true
+
+  pages-artifact-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Assemble static site
+        run: |
+          mkdir -p _site
+          cp web/index.html _site/index.html
+          cp cox_hr.py _site/cox_hr.py
+          touch _site/.nojekyll
+
+      - name: Verify expected browser assets
+        run: |
+          test -s _site/index.html
+          test -s _site/cox_hr.py
+          grep -q 'pyodide' _site/index.html
+          grep -q './cox_hr.py' _site/index.html
+          ! grep -q 'DOSSIER-SIM' _site/index.html

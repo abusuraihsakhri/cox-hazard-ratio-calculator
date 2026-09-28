@@ -1,29 +1,17 @@
 #!/usr/bin/env python3
 """
-Cox Proportional Hazards Model
+Cox proportional hazards regression implemented with the Python standard library.
 
-Real implementation of:
-  - Hazard ratio: HR = exp(β)
-  - Partial likelihood estimation via Newton-Raphson (simplified Breslow method)
-  - Wald test: z = β / SE(β)
-  - Confidence interval for HR: exp(β ± z_α/2 × SE)
-  - P-value from chi-square distribution
-  - Proportional hazards assumption check (Schoenfeld residuals)
-  - Forest plot data generation
-
-Pure Python stdlib — no external dependencies.
+The model uses Newton-Raphson optimization of the Cox partial likelihood,
+Breslow handling of tied event times, Wald inference, Schoenfeld residuals,
+and CSV batch processing.
 """
 
-import math
 import csv
-import json
+import math
 import os
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
-
-# ---------------------------------------------------------------------------
-# Core Cox PH model
-# ---------------------------------------------------------------------------
 
 def cox_ph(
     times: List[float],
@@ -32,234 +20,96 @@ def cox_ph(
     max_iter: int = 50,
     tol: float = 1e-8,
 ) -> Dict[str, Any]:
-    """
-    Fit a Cox Proportional Hazards model using Newton-Raphson.
+    """Fit a Cox proportional hazards model using Breslow ties."""
+    _validate_inputs(times, events, covariates, max_iter=max_iter, tol=tol)
 
-    Parameters
-    ----------
-    times : list of float
-        Observed times.
-    events : list of int
-        Event indicators (1=event, 0=censored).
-    covariates : list of list of float
-        Each element is a list of covariate values for one subject.
-        For univariate: [[x1], [x2], ...]
-        For multivariate: [[x1a, x1b], [x2a, x2b], ...]
-    max_iter : int
-        Maximum Newton-Raphson iterations.
-    tol : float
-        Convergence tolerance.
-
-    Returns
-    -------
-    dict with keys:
-        coefficients   – estimated β coefficients
-        hazard_ratios  – exp(β) for each covariate
-        se             – standard errors
-        z_scores       – Wald z-scores
-        p_values       – p-values for each coefficient
-        ci_lower       – lower 95% CI for HR
-        ci_upper       – upper 95% CI for HR
-        log_likelihood – partial log-likelihood at convergence
-        iterations     – number of iterations
-        n_subjects     – number of subjects
-        n_events       – number of events
-        schoenfeld     – Schoenfeld residuals for PH check
-    """
     n = len(times)
-    p = len(covariates[0]) if covariates else 0
-
-    if len(events) != n:
-        raise ValueError("times and events must have the same length")
-    if len(covariates) != n:
-        raise ValueError("covariates must have the same length as times")
-    if p == 0:
-        raise ValueError("At least one covariate is required")
-
-    # Validate all covariate vectors have consistent dimensions
-    for i, cov in enumerate(covariates):
-        if len(cov) != p:
-            raise ValueError(f"Covariate vector at index {i} has {len(cov)} elements, expected {p}")
-
-    # Validate times are non-negative and finite
-    for i, t in enumerate(times):
-        if not isinstance(t, (int, float)) or math.isnan(t) or math.isinf(t):
-            raise ValueError(f"Time at index {i} must be a finite number, got {t}")
-        if t < 0:
-            raise ValueError(f"Time at index {i} must be non-negative, got {t}")
-
-    # Validate events are binary (0 or 1)
-    for i, e in enumerate(events):
-        if e not in (0, 1):
-            raise ValueError(f"Event at index {i} must be 0 or 1, got {e}")
-
-    # Validate covariate values are finite
-    for i, cov in enumerate(covariates):
-        for j, v in enumerate(cov):
-            if not isinstance(v, (int, float)) or math.isnan(v) or math.isinf(v):
-                raise ValueError(f"Covariate value at subject {i}, covariate {j} must be finite, got {v}")
-
-    # Sort by time (ascending)
+    p = len(covariates[0])
     indices = sorted(range(n), key=lambda i: times[i])
-    sorted_times = [times[i] for i in indices]
-    sorted_events = [events[i] for i in indices]
-    sorted_cov = [covariates[i] for i in indices]
+    sorted_times = [float(times[i]) for i in indices]
+    sorted_events = [int(events[i]) for i in indices]
+    sorted_cov = [[float(v) for v in covariates[i]] for i in indices]
+    event_times = sorted({t for t, e in zip(sorted_times, sorted_events) if e == 1})
 
-    # Identify unique event times
-    event_times = sorted(set(t for t, e in zip(sorted_times, sorted_events) if e == 1))
+    beta = [0.0] * p
+    converged = False
+    iteration = 0
 
-    if not event_times:
-        raise ValueError("No events observed — cannot fit Cox model")
-
-    # Newton-Raphson
-    beta = [0.0] * p  # initial coefficients
-
-    for iteration in range(max_iter):
-        # Compute gradient and Hessian of partial log-likelihood
-        grad = [0.0] * p
-        hess = [[0.0] * p for _ in range(p)]
-        ll = 0.0
-
-        for ti in event_times:
-            # Risk set: subjects with time >= ti
-            risk_indices = [j for j in range(n) if sorted_times[j] >= ti]
-
-            # Compute exp(Xj * beta) for risk set
-            exp_xb = []
-            for j in risk_indices:
-                xb = sum(sorted_cov[j][k] * beta[k] for k in range(p))
-                exp_xb.append(math.exp(xb))
-
-            # Subjects with event at ti
-            event_indices = [j for j in risk_indices if sorted_times[j] == ti and sorted_events[j] == 1]
-
-            # For Breslow method with ties:
-            # Weighted sums
-            sum_exp_xb = sum(exp_xb)
-            sum_exp_xb_x = [sum(exp_xb[i] * sorted_cov[risk_indices[i]][k] for i in range(len(risk_indices))) for k in range(p)]
-            sum_exp_xb_xx = [
-                [sum(exp_xb[i] * sorted_cov[risk_indices[i]][k] * sorted_cov[risk_indices[i]][l]
-                     for i in range(len(risk_indices)))
-                 for l in range(p)]
-                for k in range(p)
-            ]
-
-            # Number of events at this time
-            d = len(event_indices)
-
-            # For each event subject, add to gradient
-            for j in event_indices:
-                # Log-likelihood contribution
-                xb = sum(sorted_cov[j][k] * beta[k] for k in range(p))
-                ll += xb - d * math.log(sum_exp_xb)
-
-                # Gradient
-                for k in range(p):
-                    grad[k] += sorted_cov[j][k] - d * sum_exp_xb_x[k] / sum_exp_xb
-
-                # Hessian
-                for k in range(p):
-                    for l in range(p):
-                        mean_x = sum_exp_xb_x[k] / sum_exp_xb
-                        mean_xl = sum_exp_xb_x[l] / sum_exp_xb
-                        mean_xxl = sum_exp_xb_xx[k][l] / sum_exp_xb
-                        hess[k][l] -= d * (mean_xxl - mean_x * mean_xl)
-
-        # Newton-Raphson update: beta_new = beta - H^{-1} * g
-        # Solve H * delta = -g
-        neg_grad = [-g for g in grad]
+    for iteration in range(1, max_iter + 1):
+        _, grad, hess = _partial_likelihood_components(
+            sorted_times, sorted_events, sorted_cov, beta, event_times
+        )
         try:
-            delta = _solve_linear_system(hess, neg_grad)
-        except Exception:
+            delta = _solve_linear_system(hess, [-g for g in grad])
+        except ValueError:
+            # A singular information matrix can occur with collinearity or
+            # complete/quasi-complete separation. Preserve the best iterate and
+            # expose convergence state instead of fabricating standard errors.
             break
 
-        # Update beta
-        beta_new = [beta[k] + delta[k] for k in range(p)]
-
-        # Check convergence
-        if all(abs(delta[k]) < tol for k in range(p)):
-            beta = beta_new
+        beta = [beta[k] + delta[k] for k in range(p)]
+        if max(abs(d) for d in delta) < tol:
+            converged = True
             break
-        beta = beta_new
 
-    # Compute standard errors from inverse Hessian
-    # Recompute Hessian at final beta
-    hess = [[0.0] * p for _ in range(p)]
-    ll = 0.0
+    ll, _, hess = _partial_likelihood_components(
+        sorted_times, sorted_events, sorted_cov, beta, event_times
+    )
 
-    for ti in event_times:
-        risk_indices = [j for j in range(n) if sorted_times[j] >= ti]
-        exp_xb = []
-        for j in risk_indices:
-            xb = sum(sorted_cov[j][k] * beta[k] for k in range(p))
-            exp_xb.append(math.exp(xb))
-
-        event_indices = [j for j in risk_indices if sorted_times[j] == ti and sorted_events[j] == 1]
-        d = len(event_indices)
-
-        sum_exp_xb = sum(exp_xb)
-        sum_exp_xb_x = [sum(exp_xb[i] * sorted_cov[risk_indices[i]][k] for i in range(len(risk_indices))) for k in range(p)]
-        sum_exp_xb_xx = [
-            [sum(exp_xb[i] * sorted_cov[risk_indices[i]][k] * sorted_cov[risk_indices[i]][l]
-                 for i in range(len(risk_indices)))
-             for l in range(p)]
-            for k in range(p)
-        ]
-
-        for j in event_indices:
-            xb = sum(sorted_cov[j][k] * beta[k] for k in range(p))
-            ll += xb - d * math.log(sum_exp_xb)
-
-        for k in range(p):
-            for l in range(p):
-                mean_x = sum_exp_xb_x[k] / sum_exp_xb
-                mean_xl = sum_exp_xb_x[l] / sum_exp_xb
-                mean_xxl = sum_exp_xb_xx[k][l] / sum_exp_xb
-                hess[k][l] -= d * (mean_xxl - mean_x * mean_xl)
-
-    # Variance-covariance matrix = (-H)^{-1}
     neg_hess = [[-hess[i][j] for j in range(p)] for i in range(p)]
     try:
         var_cov = _invert_matrix(neg_hess)
-    except Exception:
-        var_cov = [[float('nan')] * p for _ in range(p)]
+        se = [
+            math.sqrt(v) if math.isfinite(v) and v >= 0.0 else float("nan")
+            for v in (var_cov[k][k] for k in range(p))
+        ]
+    except ValueError:
+        se = [float("nan")] * p
 
-    se = [math.sqrt(max(0, var_cov[k][k])) for k in range(p)]
-
-    # Wald test, HR, CI, p-values
-    z_val = 1.96
-    hr = []
-    z_scores = []
-    p_values = []
-    ci_lo = []
-    ci_hi = []
+    z_val = 1.959963984540054
+    hazard_ratios: List[float] = []
+    z_scores: List[float] = []
+    p_values: List[float] = []
+    ci_lower: List[float] = []
+    ci_upper: List[float] = []
 
     for k in range(p):
-        hr_k = math.exp(beta[k])
-        z_k = beta[k] / se[k] if se[k] > 0 else 0.0
-        p_k = _z_to_p(z_k)
+        hr = _safe_exp(beta[k])
+        se_k = se[k]
+        if math.isfinite(se_k) and se_k > 0:
+            z = beta[k] / se_k
+            p_value = _z_to_p(z)
+            lo = _safe_exp(beta[k] - z_val * se_k)
+            hi = _safe_exp(beta[k] + z_val * se_k)
+        else:
+            z = float("nan")
+            p_value = float("nan")
+            lo = float("nan")
+            hi = float("nan")
 
-        hr.append(hr_k)
-        z_scores.append(z_k)
-        p_values.append(p_k)
-        ci_lo.append(math.exp(beta[k] - z_val * se[k]))
-        ci_hi.append(math.exp(beta[k] + z_val * se[k]))
+        hazard_ratios.append(hr)
+        z_scores.append(z)
+        p_values.append(p_value)
+        ci_lower.append(lo)
+        ci_upper.append(hi)
 
-    # Schoenfeld residuals for PH assumption check
-    schoenfeld = _schoenfeld_residuals(sorted_times, sorted_events, sorted_cov, beta, event_times)
+    schoenfeld = _schoenfeld_residuals(
+        sorted_times, sorted_events, sorted_cov, beta, event_times
+    )
 
     return {
         "coefficients": beta,
-        "hazard_ratios": hr,
+        "hazard_ratios": hazard_ratios,
         "se": se,
         "z_scores": z_scores,
         "p_values": p_values,
-        "ci_lower": ci_lo,
-        "ci_upper": ci_hi,
+        "ci_lower": ci_lower,
+        "ci_upper": ci_upper,
         "log_likelihood": ll,
-        "iterations": iteration + 1,
+        "iterations": iteration,
+        "converged": converged,
         "n_subjects": n,
-        "n_events": sum(events),
+        "n_events": sum(sorted_events),
         "schoenfeld": schoenfeld,
     }
 
@@ -269,9 +119,7 @@ def hazard_ratio(
     events: List[int],
     covariates: List[List[float]],
 ) -> Dict[str, Any]:
-    """
-    Convenience function: fit Cox model and return hazard ratio summary.
-    """
+    """Fit a Cox model and return the hazard-ratio summary."""
     result = cox_ph(times, events, covariates)
     return {
         "hazard_ratios": result["hazard_ratios"],
@@ -280,6 +128,7 @@ def hazard_ratio(
         "p_values": result["p_values"],
         "coefficients": result["coefficients"],
         "se": result["se"],
+        "converged": result["converged"],
     }
 
 
@@ -289,28 +138,29 @@ def forest_plot_data(
     covariates: List[List[float]],
     labels: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Generate data suitable for a forest plot.
-
-    Returns list of dicts with: label, hr, ci_lower, ci_upper, p_value, significant.
-    """
+    """Return model estimates formatted for a forest plot."""
     result = cox_ph(times, events, covariates)
     p = len(result["coefficients"])
 
     if labels is None:
-        labels = [f"Covariate_{i+1}" for i in range(p)]
+        labels = [f"Covariate_{i + 1}" for i in range(p)]
+    elif len(labels) != p:
+        raise ValueError(f"labels must contain exactly {p} values")
 
-    data = []
+    rows: List[Dict[str, Any]] = []
     for k in range(p):
-        data.append({
-            "label": labels[k],
-            "hr": round(result["hazard_ratios"][k], 4),
-            "ci_lower": round(result["ci_lower"][k], 4),
-            "ci_upper": round(result["ci_upper"][k], 4),
-            "p_value": round(result["p_values"][k], 6),
-            "significant": result["p_values"][k] < 0.05,
-        })
-    return data
+        p_value = result["p_values"][k]
+        rows.append(
+            {
+                "label": labels[k],
+                "hr": _round_or_nan(result["hazard_ratios"][k], 4),
+                "ci_lower": _round_or_nan(result["ci_lower"][k], 4),
+                "ci_upper": _round_or_nan(result["ci_upper"][k], 4),
+                "p_value": _round_or_nan(p_value, 6),
+                "significant": bool(math.isfinite(p_value) and p_value < 0.05),
+            }
+        )
+    return rows
 
 
 def check_proportional_hazards(
@@ -318,221 +168,330 @@ def check_proportional_hazards(
     events: List[int],
     covariates: List[List[float]],
 ) -> Dict[str, Any]:
-    """
-    Check the proportional hazards assumption using Schoenfeld residuals.
-
-    Tests whether Schoenfeld residuals are correlated with time.
-    A significant correlation suggests violation of PH assumption.
-
-    Returns dict with:
-        correlation : correlation between Schoenfeld residuals and time
-        p_value     : p-value for the correlation test
-        assumption_holds : True if p > 0.05
-    """
+    """Check correlation of Schoenfeld residuals with event time."""
     result = cox_ph(times, events, covariates)
     schoenfeld = result["schoenfeld"]
-
     if not schoenfeld:
-        return {"correlation": [], "p_value": [], "assumption_holds": []}
+        return {"checks": []}
 
+    checks: List[Dict[str, Any]] = []
     p = len(result["coefficients"])
-    checks = []
-
     for k in range(p):
-        if isinstance(schoenfeld[0], dict):
-            residuals = [s["residual"][k] for s in schoenfeld]
-            times_at_events = [s["time"] for s in schoenfeld]
-        else:
-            residuals = [s[k] for s in schoenfeld]
-            times_at_events = list(range(len(schoenfeld)))
+        residuals = [s["residual"][k] for s in schoenfeld]
+        times_at_events = [s["time"] for s in schoenfeld]
 
-        # Compute correlation
         if len(residuals) < 3:
-            checks.append({
-                "covariate": k,
-                "correlation": 0.0,
-                "p_value": 1.0,
-                "assumption_holds": True,
-            })
+            checks.append(
+                {
+                    "covariate": k,
+                    "correlation": 0.0,
+                    "p_value": 1.0,
+                    "assumption_holds": True,
+                }
+            )
             continue
 
         r = _pearson_correlation(times_at_events, residuals)
-        n_r = len(residuals)
-        # t-test for correlation
+        df = len(residuals) - 2
         if abs(r) >= 1.0:
-            t_stat = float('inf')
-            p_val = 0.0
+            p_value = 0.0
         else:
-            t_stat = r * math.sqrt((n_r - 2) / (1 - r * r))
-            p_val = 2.0 * _t_sf(abs(t_stat), n_r - 2)
+            t_stat = abs(r) * math.sqrt(df / max(1e-15, 1.0 - r * r))
+            p_value = min(1.0, 2.0 * _t_sf(t_stat, df))
 
-        checks.append({
-            "covariate": k,
-            "correlation": round(r, 4),
-            "p_value": round(p_val, 6),
-            "assumption_holds": p_val > 0.05,
-        })
+        checks.append(
+            {
+                "covariate": k,
+                "correlation": round(r, 4),
+                "p_value": round(p_value, 6),
+                "assumption_holds": p_value > 0.05,
+            }
+        )
 
     return {"checks": checks}
 
 
-# ---------------------------------------------------------------------------
-# CSV batch processing
-# ---------------------------------------------------------------------------
-
 def process_csv(input_path: str, output_path: str) -> Dict[str, Any]:
-    """
-    Process a CSV file for Cox PH analysis.
-
-    Expected columns: time, event, and one or more covariate columns.
-    Column names auto-detected.
-    """
-    # Security: validate paths to prevent path traversal
+    """Fit a Cox model from a CSV and write a forest-plot summary CSV."""
     input_path = _validate_safe_path(input_path)
     output_path = _validate_safe_path(output_path)
 
     with open(input_path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         fieldnames = list(reader.fieldnames or [])
+        if not fieldnames:
+            raise ValueError("Input CSV is missing a header row")
         rows = list(reader)
+
+    if not rows:
+        raise ValueError("Input CSV contains no data rows")
 
     time_col = _find_col(fieldnames, ["time", "survival_time", "days", "months", "t"])
     event_col = _find_col(fieldnames, ["event", "status", "dead", "censored", "e"])
+    if time_col == event_col:
+        raise ValueError("Time and event columns must be distinct")
 
-    # All other numeric columns are covariates
     covariate_cols = [c for c in fieldnames if c not in (time_col, event_col)]
+    if not covariate_cols:
+        raise ValueError("At least one covariate column is required")
 
-    times = [float(r[time_col]) for r in rows]
-    events = [int(float(r[event_col])) for r in rows]
-    covariates = []
-    for r in rows:
-        cov = []
-        for c in covariate_cols:
+    times: List[float] = []
+    events: List[int] = []
+    covariates: List[List[float]] = []
+
+    for row_number, row in enumerate(rows, start=2):
+        try:
+            times.append(float(row[time_col]))
+            events.append(int(float(row[event_col])))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid time/event value on CSV row {row_number}"
+            ) from exc
+
+        cov_row: List[float] = []
+        for column in covariate_cols:
+            raw = row.get(column)
+            if raw is None or str(raw).strip() == "":
+                raise ValueError(
+                    f"Missing covariate value in column '{column}' on CSV row {row_number}"
+                )
             try:
-                cov.append(float(r[c]))
-            except (ValueError, KeyError):
-                cov.append(0.0)
-        covariates.append(cov)
+                cov_row.append(float(raw))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Invalid covariate value in column '{column}' on CSV row {row_number}"
+                ) from exc
+        covariates.append(cov_row)
 
     result = cox_ph(times, events, covariates)
-    fp = forest_plot_data(times, events, covariates, labels=covariate_cols)
+    forest = forest_plot_data(times, events, covariates, labels=covariate_cols)
 
-    # Write forest plot data
-    out_fields = ["covariate", "hazard_ratio", "ci_lower", "ci_upper", "p_value", "significant"]
-    out_rows = []
-    for item in fp:
-        out_rows.append({
-            "covariate": item["label"],
-            "hazard_ratio": str(item["hr"]),
-            "ci_lower": str(item["ci_lower"]),
-            "ci_upper": str(item["ci_upper"]),
-            "p_value": str(item["p_value"]),
-            "significant": str(item["significant"]),
-        })
-
+    out_fields = [
+        "covariate",
+        "hazard_ratio",
+        "ci_lower",
+        "ci_upper",
+        "p_value",
+        "significant",
+    ]
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=out_fields)
         writer.writeheader()
-        writer.writerows(out_rows)
+        for item in forest:
+            writer.writerow(
+                {
+                    "covariate": item["label"],
+                    "hazard_ratio": item["hr"],
+                    "ci_lower": item["ci_lower"],
+                    "ci_upper": item["ci_upper"],
+                    "p_value": item["p_value"],
+                    "significant": item["significant"],
+                }
+            )
 
     return result
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _validate_inputs(
+    times: List[float],
+    events: List[int],
+    covariates: List[List[float]],
+    *,
+    max_iter: int,
+    tol: float,
+) -> None:
+    n = len(times)
+    if n == 0:
+        raise ValueError("At least one subject is required")
+    if len(events) != n:
+        raise ValueError("times and events must have the same length")
+    if len(covariates) != n:
+        raise ValueError("covariates must have the same length as times")
+    if not isinstance(max_iter, int) or max_iter <= 0:
+        raise ValueError("max_iter must be a positive integer")
+    if not isinstance(tol, (int, float)) or not math.isfinite(tol) or tol <= 0:
+        raise ValueError("tol must be a positive finite number")
+
+    p = len(covariates[0]) if covariates else 0
+    if p == 0:
+        raise ValueError("At least one covariate is required")
+
+    for i, t in enumerate(times):
+        if not isinstance(t, (int, float)) or not math.isfinite(t):
+            raise ValueError(f"Time at index {i} must be a finite number, got {t}")
+        if t < 0:
+            raise ValueError(f"Time at index {i} must be non-negative, got {t}")
+
+    for i, event in enumerate(events):
+        if event not in (0, 1):
+            raise ValueError(f"Event at index {i} must be 0 or 1, got {event}")
+
+    for i, cov in enumerate(covariates):
+        if len(cov) != p:
+            raise ValueError(
+                f"Covariate vector at index {i} has {len(cov)} elements, expected {p}"
+            )
+        for j, value in enumerate(cov):
+            if not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(
+                    f"Covariate value at subject {i}, covariate {j} must be finite, got {value}"
+                )
+
+    if not any(events):
+        raise ValueError("No events observed — cannot fit Cox model")
+
+
+def _partial_likelihood_components(
+    times: List[float],
+    events: List[int],
+    covariates: List[List[float]],
+    beta: List[float],
+    event_times: List[float],
+):
+    """Return Breslow partial log-likelihood, score, and Hessian."""
+    n = len(times)
+    p = len(beta)
+    grad = [0.0] * p
+    hess = [[0.0] * p for _ in range(p)]
+    ll = 0.0
+
+    for event_time in event_times:
+        risk_indices = [i for i in range(n) if times[i] >= event_time]
+        event_indices = [
+            i for i in risk_indices if times[i] == event_time and events[i] == 1
+        ]
+        d = len(event_indices)
+        if d == 0:
+            continue
+
+        xb = [
+            sum(covariates[i][k] * beta[k] for k in range(p))
+            for i in risk_indices
+        ]
+        shift = max(xb)
+        weights = [math.exp(value - shift) for value in xb]
+        denominator = sum(weights)
+        log_risk_sum = shift + math.log(denominator)
+
+        mean = [
+            sum(weights[j] * covariates[risk_indices[j]][k] for j in range(len(risk_indices)))
+            / denominator
+            for k in range(p)
+        ]
+        mean_xx = [
+            [
+                sum(
+                    weights[j]
+                    * covariates[risk_indices[j]][k]
+                    * covariates[risk_indices[j]][l]
+                    for j in range(len(risk_indices))
+                )
+                / denominator
+                for l in range(p)
+            ]
+            for k in range(p)
+        ]
+
+        ll += sum(
+            sum(covariates[i][k] * beta[k] for k in range(p))
+            for i in event_indices
+        ) - d * log_risk_sum
+
+        for k in range(p):
+            grad[k] += sum(covariates[i][k] for i in event_indices) - d * mean[k]
+            for l in range(p):
+                hess[k][l] -= d * (mean_xx[k][l] - mean[k] * mean[l])
+
+    return ll, grad, hess
+
 
 def _find_col(fieldnames: List[str], candidates: List[str]) -> str:
-    lower_map = {c.lower(): c for c in fieldnames}
-    for cand in candidates:
-        if cand.lower() in lower_map:
-            return lower_map[cand.lower()]
-    return fieldnames[0]
+    lower_map = {name.strip().lower(): name for name in fieldnames}
+    for candidate in candidates:
+        match = lower_map.get(candidate.lower())
+        if match is not None:
+            return match
+    raise ValueError(
+        "Required CSV column not found; expected one of: " + ", ".join(candidates)
+    )
 
 
 def _validate_safe_path(path: str) -> str:
-    """Validate that a file path is safe (no path traversal)."""
-    # Resolve to absolute path
-    abs_path = os.path.abspath(path)
-    # Check for null bytes (can bypass some checks)
-    if '\x00' in path:
+    """Reject NULs and relative parent traversal while allowing explicit absolute paths."""
+    if not isinstance(path, str) or not path:
+        raise ValueError("Path must be a non-empty string")
+    if "\x00" in path:
         raise ValueError("Path contains null bytes")
-    # Check for path traversal attempts
+
     normalized = os.path.normpath(path)
-    if '..' in normalized.split(os.sep):
-        # Allow relative paths with .. but ensure they don't escape cwd
+    absolute = os.path.abspath(path)
+    if not os.path.isabs(path) and ".." in normalized.split(os.sep):
         cwd = os.path.abspath(os.getcwd())
-        if not abs_path.startswith(cwd):
+        try:
+            inside_cwd = os.path.commonpath([cwd, absolute]) == cwd
+        except ValueError:
+            inside_cwd = False
+        if not inside_cwd:
             raise ValueError(f"Path traversal detected: {path}")
-    return abs_path
+    return absolute
 
 
 def _solve_linear_system(A: List[List[float]], b: List[float]) -> List[float]:
     """Solve Ax = b using Gaussian elimination with partial pivoting."""
     n = len(b)
-    # Augmented matrix
-    M = [row[:] + [b[i]] for i, row in enumerate(A)]
+    if len(A) != n or any(len(row) != n for row in A):
+        raise ValueError("A must be a square matrix matching b")
 
+    matrix = [row[:] + [b[i]] for i, row in enumerate(A)]
     for col in range(n):
-        # Partial pivoting
-        max_row = col
-        for row in range(col + 1, n):
-            if abs(M[row][col]) > abs(M[max_row][col]):
-                max_row = row
-        M[col], M[max_row] = M[max_row], M[col]
-
-        if abs(M[col][col]) < 1e-15:
+        pivot_row = max(range(col, n), key=lambda row: abs(matrix[row][col]))
+        matrix[col], matrix[pivot_row] = matrix[pivot_row], matrix[col]
+        if abs(matrix[col][col]) < 1e-15:
             raise ValueError("Singular matrix")
 
-        # Eliminate
         for row in range(col + 1, n):
-            factor = M[row][col] / M[col][col]
+            factor = matrix[row][col] / matrix[col][col]
             for j in range(col, n + 1):
-                M[row][j] -= factor * M[col][j]
+                matrix[row][j] -= factor * matrix[col][j]
 
-    # Back substitution
-    x = [0.0] * n
+    solution = [0.0] * n
     for i in range(n - 1, -1, -1):
-        x[i] = M[i][n]
-        for j in range(i + 1, n):
-            x[i] -= M[i][j] * x[j]
-        x[i] /= M[i][i]
-
-    return x
+        rhs = matrix[i][n] - sum(
+            matrix[i][j] * solution[j] for j in range(i + 1, n)
+        )
+        solution[i] = rhs / matrix[i][i]
+    return solution
 
 
 def _invert_matrix(A: List[List[float]]) -> List[List[float]]:
-    """Invert a matrix using Gauss-Jordan elimination."""
+    """Invert a square matrix using Gauss-Jordan elimination."""
     n = len(A)
-    # Augmented matrix [A | I]
-    M = [A[i][:] + [1.0 if j == i else 0.0 for j in range(n)] for i in range(n)]
+    if n == 0 or any(len(row) != n for row in A):
+        raise ValueError("A must be a non-empty square matrix")
+
+    matrix = [
+        A[i][:] + [1.0 if i == j else 0.0 for j in range(n)]
+        for i in range(n)
+    ]
 
     for col in range(n):
-        # Partial pivoting
-        max_row = col
-        for row in range(col + 1, n):
-            if abs(M[row][col]) > abs(M[max_row][col]):
-                max_row = row
-        M[col], M[max_row] = M[max_row], M[col]
-
-        pivot = M[col][col]
+        pivot_row = max(range(col, n), key=lambda row: abs(matrix[row][col]))
+        matrix[col], matrix[pivot_row] = matrix[pivot_row], matrix[col]
+        pivot = matrix[col][col]
         if abs(pivot) < 1e-15:
             raise ValueError("Singular matrix")
 
-        # Scale pivot row
         for j in range(2 * n):
-            M[col][j] /= pivot
+            matrix[col][j] /= pivot
 
-        # Eliminate column
         for row in range(n):
             if row == col:
                 continue
-            factor = M[row][col]
+            factor = matrix[row][col]
             for j in range(2 * n):
-                M[row][j] -= factor * M[col][j]
+                matrix[row][j] -= factor * matrix[col][j]
 
-    # Extract inverse
-    return [M[i][n:] for i in range(n)]
+    return [matrix[i][n:] for i in range(n)]
 
 
 def _schoenfeld_residuals(
@@ -542,150 +501,138 @@ def _schoenfeld_residuals(
     beta: List[float],
     event_times: List[float],
 ) -> List[Dict[str, Any]]:
-    """
-    Compute Schoenfeld residuals at each event time.
-    r_k(ti) = x_k(event_subject) - E[x_k | ti]
-    where E[x_k | ti] = Σ x_k(j) * exp(xj*β) / Σ exp(xj*β) over risk set.
-    """
+    """Compute Schoenfeld residuals for each observed event."""
     n = len(times)
     p = len(beta)
-    residuals = []
+    residuals: List[Dict[str, Any]] = []
 
-    for ti in event_times:
-        risk_indices = [j for j in range(n) if times[j] >= ti]
-        event_indices = [j for j in risk_indices if times[j] == ti and events[j] == 1]
+    for event_time in event_times:
+        risk_indices = [i for i in range(n) if times[i] >= event_time]
+        event_indices = [
+            i for i in risk_indices if times[i] == event_time and events[i] == 1
+        ]
+        xb = [
+            sum(covariates[i][k] * beta[k] for k in range(p))
+            for i in risk_indices
+        ]
+        shift = max(xb)
+        weights = [math.exp(value - shift) for value in xb]
+        denominator = sum(weights)
+        expected = [
+            sum(weights[j] * covariates[risk_indices[j]][k] for j in range(len(risk_indices)))
+            / denominator
+            for k in range(p)
+        ]
 
-        # Compute weighted mean of covariates in risk set
-        exp_xb = []
-        for j in risk_indices:
-            xb = sum(covariates[j][k] * beta[k] for k in range(p))
-            exp_xb.append(math.exp(xb))
-
-        sum_exp_xb = sum(exp_xb)
-        expected = []
-        for k in range(p):
-            ex = sum(exp_xb[i] * covariates[risk_indices[i]][k] for i in range(len(risk_indices))) / sum_exp_xb
-            expected.append(ex)
-
-        # Schoenfeld residual for each event subject
-        for j in event_indices:
-            res = [covariates[j][k] - expected[k] for k in range(p)]
-            residuals.append({"time": ti, "residual": res})
+        for i in event_indices:
+            residuals.append(
+                {
+                    "time": event_time,
+                    "residual": [
+                        covariates[i][k] - expected[k] for k in range(p)
+                    ],
+                }
+            )
 
     return residuals
 
 
 def _pearson_correlation(x: List[float], y: List[float]) -> float:
-    """Compute Pearson correlation coefficient."""
+    """Compute the Pearson correlation coefficient."""
+    if len(x) != len(y):
+        raise ValueError("x and y must have the same length")
     n = len(x)
     if n < 2:
         return 0.0
     mean_x = sum(x) / n
     mean_y = sum(y) / n
-    cov = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
-    var_x = sum((xi - mean_x) ** 2 for xi in x)
-    var_y = sum((yi - mean_y) ** 2 for yi in y)
-    denom = math.sqrt(var_x * var_y)
-    if denom == 0:
-        return 0.0
-    return cov / denom
+    covariance = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
+    var_x = sum((value - mean_x) ** 2 for value in x)
+    var_y = sum((value - mean_y) ** 2 for value in y)
+    denominator = math.sqrt(var_x * var_y)
+    return 0.0 if denominator == 0.0 else covariance / denominator
 
 
 def _z_to_p(z: float) -> float:
-    """Two-tailed p-value from z-score."""
+    """Two-tailed p-value from a standard-normal z statistic."""
     return 2.0 * (1.0 - _norm_cdf(abs(z)))
 
 
 def _norm_cdf(x: float) -> float:
-    """Standard normal CDF."""
+    """Standard normal cumulative distribution function."""
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
 def _t_sf(t: float, df: int) -> float:
-    """Survival function of t-distribution: P(T > |t|) (one-tailed)."""
+    """One-tailed survival function P(T > |t|) for Student's t."""
+    if df <= 0:
+        raise ValueError("df must be positive")
+    t = abs(float(t))
     if df > 30:
-        return 1.0 - _norm_cdf(abs(t))
-    # Use approximation: for small df, use the incomplete beta function
+        return 1.0 - _norm_cdf(t)
     x = df / (df + t * t)
-    return _inc_beta(df / 2.0, 0.5, x)
+    # I_x(df/2, 1/2) is the two-tailed probability for |T| >= t.
+    return 0.5 * _inc_beta(df / 2.0, 0.5, x)
 
 
 def _inc_beta(a: float, b: float, x: float) -> float:
-    """Regularized incomplete beta function I_x(a, b) via continued fraction."""
-    if x < 0 or x > 1:
+    """Regularized incomplete beta function I_x(a, b)."""
+    if x < 0.0 or x > 1.0:
+        raise ValueError("x must lie in [0, 1]")
+    if x == 0.0:
         return 0.0
-    if x == 0:
-        return 0.0
-    if x == 1:
+    if x == 1.0:
         return 1.0
 
-    # Continued fraction (Lentz's method)
     max_iter = 200
     eps = 1e-12
+    log_beta = _log_gamma(a) + _log_gamma(b) - _log_gamma(a + b)
+    front = math.exp(a * math.log(x) + b * math.log(1.0 - x) - log_beta)
 
-    lbeta = _log_gamma(a) + _log_gamma(b) - _log_gamma(a + b)
-    front = math.exp(math.log(x) * a + math.log(1.0 - x) * b - lbeta)
-
-    # Use continued fraction for I_x(a, b)
-    if x < (a + 1) / (a + b + 2):
-        cf = _beta_cf(a, b, x, max_iter, eps)
-        return front * cf / a
-    else:
-        cf = _beta_cf(b, a, 1.0 - x, max_iter, eps)
-        return 1.0 - front * cf / b
+    if x < (a + 1.0) / (a + b + 2.0):
+        return front * _beta_cf(a, b, x, max_iter, eps) / a
+    return 1.0 - front * _beta_cf(b, a, 1.0 - x, max_iter, eps) / b
 
 
 def _beta_cf(a: float, b: float, x: float, max_iter: int, eps: float) -> float:
-    """Continued fraction for incomplete beta."""
     qab = a + b
     qap = a + 1.0
     qam = a - 1.0
-
     c = 1.0
     d = 1.0 - qab * x / qap
-    if abs(d) < 1e-30:
-        d = 1e-30
+    d = 1e-30 if abs(d) < 1e-30 else d
     d = 1.0 / d
     h = d
 
     for m in range(1, max_iter + 1):
         m2 = 2 * m
-        # Even step
         aa = m * (b - m) * x / ((qam + m2) * (a + m2))
         d = 1.0 + aa * d
-        if abs(d) < 1e-30:
-            d = 1e-30
+        d = 1e-30 if abs(d) < 1e-30 else d
         c = 1.0 + aa / c
-        if abs(c) < 1e-30:
-            c = 1e-30
+        c = 1e-30 if abs(c) < 1e-30 else c
         d = 1.0 / d
         h *= d * c
 
-        # Odd step
         aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
         d = 1.0 + aa * d
-        if abs(d) < 1e-30:
-            d = 1e-30
+        d = 1e-30 if abs(d) < 1e-30 else d
         c = 1.0 + aa / c
-        if abs(c) < 1e-30:
-            c = 1e-30
+        c = 1e-30 if abs(c) < 1e-30 else c
         d = 1.0 / d
         delta = d * c
         h *= delta
-
         if abs(delta - 1.0) < eps:
             break
-
     return h
 
 
 def _log_gamma(x: float) -> float:
-    """Log of gamma function using Lanczos approximation."""
+    """Log gamma using the Lanczos approximation."""
     if x < 0.5:
         return math.log(math.pi / math.sin(math.pi * x)) - _log_gamma(1.0 - x)
-    x -= 1.0
-    g = 7
-    c = [
+
+    coefficients = [
         0.99999999999980993,
         676.5203681218851,
         -1259.1392167224028,
@@ -696,41 +643,75 @@ def _log_gamma(x: float) -> float:
         9.9843695780195716e-6,
         1.5056327351493116e-7,
     ]
-    total = c[0]
-    for i in range(1, g + 2):
-        total += c[i] / (x + i)
-    st = x + g + 0.5
-    return 0.5 * math.log(2.0 * math.pi) + (x + 0.5) * math.log(st) - st + math.log(total)
+    x -= 1.0
+    total = coefficients[0]
+    for i, coefficient in enumerate(coefficients[1:], start=1):
+        total += coefficient / (x + i)
+    g = 7.0
+    t = x + g + 0.5
+    return (
+        0.5 * math.log(2.0 * math.pi)
+        + (x + 0.5) * math.log(t)
+        - t
+        + math.log(total)
+    )
 
 
-# ---------------------------------------------------------------------------
-# Summary
-# ---------------------------------------------------------------------------
+def _safe_exp(value: float) -> float:
+    if value > 709.0:
+        return float("inf")
+    if value < -745.0:
+        return 0.0
+    return math.exp(value)
 
-def summary(times: List[float], events: List[int], covariates: List[List[float]], labels: Optional[List[str]] = None) -> str:
-    """Return a formatted summary of the Cox PH analysis."""
+
+def _round_or_nan(value: float, digits: int):
+    return round(value, digits) if math.isfinite(value) else value
+
+
+def summary(
+    times: List[float],
+    events: List[int],
+    covariates: List[List[float]],
+    labels: Optional[List[str]] = None,
+) -> str:
+    """Return a formatted text summary of the fitted model."""
     result = cox_ph(times, events, covariates)
     p = len(result["coefficients"])
-
     if labels is None:
-        labels = [f"Covariate_{i+1}" for i in range(p)]
+        labels = [f"Covariate_{i + 1}" for i in range(p)]
+    elif len(labels) != p:
+        raise ValueError(f"labels must contain exactly {p} values")
 
-    lines = []
-    lines.append("Cox Proportional Hazards Model")
-    lines.append("=" * 70)
-    lines.append(f"  Subjects: {result['n_subjects']}   Events: {result['n_events']}   Iterations: {result['iterations']}")
-    lines.append(f"  Log-likelihood: {result['log_likelihood']:.4f}")
-    lines.append("")
-    lines.append(f"  {'Covariate':<20} {'Coef':>8} {'SE':>8} {'HR':>8} {'95% CI':>18} {'z':>8} {'p':>10}")
-    lines.append("  " + "-" * 82)
+    lines = [
+        "Cox Proportional Hazards Model",
+        "=" * 70,
+        (
+            f"  Subjects: {result['n_subjects']}   Events: {result['n_events']}   "
+            f"Iterations: {result['iterations']}   Converged: {result['converged']}"
+        ),
+        f"  Log-likelihood: {result['log_likelihood']:.4f}",
+        "",
+        f"  {'Covariate':<20} {'Coef':>8} {'SE':>8} {'HR':>8} {'95% CI':>18} {'z':>8} {'p':>10}",
+        "  " + "-" * 82,
+    ]
+
     for k in range(p):
-        ci = f"[{result['ci_lower'][k]:.4f}, {result['ci_upper'][k]:.4f}]"
-        sig = "*" if result["p_values"][k] < 0.05 else ""
-        lines.append(
-            f"  {labels[k]:<20} {result['coefficients'][k]:>8.4f} {result['se'][k]:>8.4f} "
-            f"{result['hazard_ratios'][k]:>8.4f} {ci:>18s} {result['z_scores'][k]:>8.4f} "
-            f"{result['p_values'][k]:>10.6f}{sig}"
+        lo = result["ci_lower"][k]
+        hi = result["ci_upper"][k]
+        ci = (
+            f"[{lo:.4f}, {hi:.4f}]"
+            if math.isfinite(lo) and math.isfinite(hi)
+            else "[nan, nan]"
         )
-    lines.append("")
-    lines.append("  * p < 0.05")
+        p_value = result["p_values"][k]
+        significant = "*" if math.isfinite(p_value) and p_value < 0.05 else ""
+        lines.append(
+            f"  {labels[k]:<20} {result['coefficients'][k]:>8.4f} "
+            f"{result['se'][k]:>8.4f} {result['hazard_ratios'][k]:>8.4f} "
+            f"{ci:>18s} {result['z_scores'][k]:>8.4f} "
+            f"{result['p_values'][k]:>10.6f}{significant}"
+        )
+
+    lines.extend(["", "  * p < 0.05"])
     return "\n".join(lines)
