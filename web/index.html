@@ -454,14 +454,20 @@
         "import cox_hr"
       );
       analyzeBtn.disabled = false;
+      document.documentElement.dataset.runtimeStatus = "ready";
       setStatus("Python runtime ready. Analysis runs locally in this browser.", "ready");
+      if (new URLSearchParams(window.location.search).get("smoke") === "1") {
+        await analyze();
+      }
     } catch (error) {
+      document.documentElement.dataset.runtimeStatus = "error";
       setStatus("Runtime failed to initialize: " + error.message, "error");
     }
   }
 
   async function analyze() {
     try {
+      document.documentElement.dataset.analysisStatus = "running";
       analyzeBtn.disabled = true;
       downloadBtn.disabled = true;
       setStatus("Running Cox model…");
@@ -506,6 +512,8 @@ json.dumps(clean({"model": model, "ph": ph, "labels": payload["labels"]}), allow
       latestResult = JSON.parse(resultJson);
       renderResults(latestResult);
       downloadBtn.disabled = false;
+      document.documentElement.dataset.analysisStatus =
+        latestResult.model.converged ? "complete" : "nonconverged";
       setStatus(
         latestResult.model.converged
           ? "Analysis complete."
@@ -514,6 +522,7 @@ json.dumps(clean({"model": model, "ph": ph, "labels": payload["labels"]}), allow
       );
     } catch (error) {
       latestResult = null;
+      document.documentElement.dataset.analysisStatus = "error";
       resultContent.replaceChildren();
       const message = document.createElement("p");
       message.className = "empty";
