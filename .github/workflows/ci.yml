@@ -62,7 +62,11 @@ jobs:
 
       - name: Start container
         run: |
-          docker run --rm -d             --name cox-hazard-ratio-calculator-ci             -e AUDIT_SECRET_KEY=ci-test-only-secret-key             -p 8000:8000             cox-hazard-ratio-calculator:ci
+          docker run --rm -d \
+            --name cox-hazard-ratio-calculator-ci \
+            -e AUDIT_SECRET_KEY=ci-test-only-secret-key \
+            -p 8000:8000 \
+            cox-hazard-ratio-calculator:ci
 
       - name: Verify health endpoint
         run: |
@@ -80,7 +84,7 @@ jobs:
         if: always()
         run: docker stop cox-hazard-ratio-calculator-ci || true
 
-  pages-artifact-smoke:
+  browser-runtime-smoke:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -92,10 +96,40 @@ jobs:
           cp cox_hr.py _site/cox_hr.py
           touch _site/.nojekyll
 
-      - name: Verify expected browser assets
+      - name: Verify static assets
         run: |
           test -s _site/index.html
           test -s _site/cox_hr.py
           grep -q 'pyodide' _site/index.html
           grep -q './cox_hr.py' _site/index.html
           ! grep -q 'DOSSIER-SIM' _site/index.html
+
+      - name: Execute browser analysis through Pyodide
+        run: |
+          browser="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          test -n "$browser"
+
+          python3 -m http.server 4173 --directory _site >/tmp/cox-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+          timeout 100s "$browser" \
+            --headless \
+            --no-sandbox \
+            --disable-gpu \
+            --disable-dev-shm-usage \
+            --virtual-time-budget=60000 \
+            --dump-dom \
+            "http://127.0.0.1:4173/?smoke=1" > /tmp/browser-dom.html
+
+          grep -q 'data-runtime-status="ready"' /tmp/browser-dom.html
+          grep -q 'data-analysis-status="complete"' /tmp/browser-dom.html
+          grep -q 'Model estimates' /tmp/browser-dom.html
+          grep -q 'Analysis complete.' /tmp/browser-dom.html
